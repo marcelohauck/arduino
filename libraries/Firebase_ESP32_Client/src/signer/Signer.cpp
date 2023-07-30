@@ -1,14 +1,14 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
 /**
- * Google's Firebase Token Management class, Signer.cpp version 1.3.13
+ * Google's Firebase Token Management class, Signer.cpp version 1.3.14
  *
  * This library supports Espressif ESP8266, ESP32 and Raspberry Pi Pico
  *
- * Created June 7, 2023
+ * Created July 16, 2023
  *
  * This work is a part of Firebase ESP Client library
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -286,6 +286,13 @@ bool Firebase_Signer::checkAuthTypeChanged(FirebaseConfig *config, FirebaseAuth 
 
 time_t Firebase_Signer::getTime()
 {
+    // When the pointers are not yet initialized.
+    uint32_t ts = 0;
+    uint32_t ts_offset = 0;
+    if (!mb_ts)
+        mb_ts = &ts;
+    if (!ts_offset)
+        mb_ts_offset = &ts_offset;
     return TimeHelper::getTime(mb_ts, mb_ts_offset);
 }
 
@@ -634,7 +641,7 @@ void Firebase_Signer::tokenProcessingTask()
                     config->internal.fb_last_jwt_generation_error_cb_millis = 0;
                 }
 
-                // reset flag to allow clock synching execution again in ut->syncClock if clocck synching was timed out
+                // reset flag to allow clock synching execution again in TimeHelper::syncClock if clocck synching was timed out
                 config->internal.fb_clock_synched = false;
 
                 reconnect();
@@ -826,13 +833,13 @@ bool Firebase_Signer::refreshToken()
     return true;
 }
 
-void Firebase_Signer::newClient(FB_TCP_CLIENT **client)
+void Firebase_Signer::newClient(FB_TCP_CLIENT **client, bool initSSLClient)
 {
     freeClient(client);
 
     if (!*client)
     {
-        *client = new FB_TCP_CLIENT();
+        *client = new FB_TCP_CLIENT(initSSLClient);
 
         if (*client)
         {
@@ -877,8 +884,13 @@ void Firebase_Signer::setTokenError(int code)
 bool Firebase_Signer::handleTaskError(int code, int httpCode)
 {
     // Close TCP connection and unlock used flag
-    tcpClient->stop();
-    tcpClient->reserved = false;
+
+    if (tcpClient)
+    {
+        tcpClient->stop();
+        tcpClient->reserved = false;
+    }
+
     config->internal.fb_processing = false;
 
     switch (code)
@@ -1048,6 +1060,20 @@ bool Firebase_Signer::handleTokenResponse(int &httpCode)
     return false;
 }
 
+bool Firebase_Signer::handleError(int code, const char *descr, int errNum)
+{
+#if defined(ESP32)
+    char *temp = MemoryHelper::createBuffer<char *>(mbfs, 100);
+    mbedtls_strerror(errNum, temp, 100);
+    config->signer.tokens.error.message = temp;
+    MemoryHelper::freeBuffer(mbfs, temp);
+#endif
+    setTokenError(code);
+    config->signer.tokens.error.message.insert(0, descr);
+    sendTokenStatusCB();
+    return false;
+}
+
 bool Firebase_Signer::createJWT()
 {
 
@@ -1187,15 +1213,8 @@ bool Firebase_Signer::createJWT()
                              config->signer.encHeadPayload.length(), config->signer.hash);
         if (ret != 0)
         {
-            char *temp = MemoryHelper::createBuffer<char *>(mbfs, 100);
-            mbedtls_strerror(ret, temp, 100);
-            config->signer.tokens.error.message = temp;
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("mbedTLS, mbedtls_md: "));
-            MemoryHelper::freeBuffer(mbfs, temp);
-            setTokenError(FIREBASE_ERROR_TOKEN_CREATE_HASH);
-            sendTokenStatusCB();
             MemoryHelper::freeBuffer(mbfs, config->signer.hash);
-            return false;
+            return handleError(FIREBASE_ERROR_TOKEN_CREATE_HASH, (const char *)FPSTR("mbedTLS, mbedtls_md: "), ret);
         }
 #elif defined(ESP8266) || defined(MB_ARDUINO_PICO)
         config->signer.hash = MemoryHelper::createBuffer<char *>(Signer.mbfs, config->signer.hashSize);
@@ -1232,18 +1251,11 @@ bool Firebase_Signer::createJWT()
 
         if (ret != 0)
         {
-            char *temp = MemoryHelper::createBuffer<char *>(mbfs, 100);
-            mbedtls_strerror(ret, temp, 100);
-            config->signer.tokens.error.message = temp;
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("mbedTLS, mbedtls_pk_parse_key: "));
-            MemoryHelper::freeBuffer(mbfs, temp);
-            setTokenError(FIREBASE_ERROR_TOKEN_PARSE_PK);
-            sendTokenStatusCB();
             mbedtls_pk_free(config->signer.pk_ctx);
             MemoryHelper::freeBuffer(mbfs, config->signer.hash);
             delete config->signer.pk_ctx;
             config->signer.pk_ctx = nullptr;
-            return false;
+            return handleError(FIREBASE_ERROR_TOKEN_PARSE_PK, (const char *)FPSTR("mbedTLS, mbedtls_pk_parse_key: "), ret);
         }
 
         // generate RSA signature from private key and message digest
@@ -1260,15 +1272,7 @@ bool Firebase_Signer::createJWT()
                               config->signer.signature, &sigLen,
                               mbedtls_ctr_drbg_random, config->signer.ctr_drbg_ctx);
         if (ret != 0)
-        {
-            char *temp = MemoryHelper::createBuffer<char *>(mbfs, 100);
-            mbedtls_strerror(ret, temp, 100);
-            config->signer.tokens.error.message = temp;
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("mbedTLS, mbedtls_pk_sign: "));
-            MemoryHelper::freeBuffer(mbfs, temp);
-            setTokenError(FIREBASE_ERROR_TOKEN_SIGN);
-            sendTokenStatusCB();
-        }
+            handleError(FIREBASE_ERROR_TOKEN_SIGN, (const char *)FPSTR("mbedTLS, mbedtls_pk_sign: "), ret);
         else
         {
             config->signer.encSignature.clear();
@@ -1309,21 +1313,13 @@ bool Firebase_Signer::createJWT()
             pk = new BearSSL::PrivateKey((const char *)config->service_account.data.private_key);
 
         if (!pk)
-        {
-            setTokenError(FIREBASE_ERROR_TOKEN_PARSE_PK);
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("BearSSL, PrivateKey: "));
-            sendTokenStatusCB();
-            return false;
-        }
+            return handleError(FIREBASE_ERROR_TOKEN_PARSE_PK, (const char *)FPSTR("BearSSL, PrivateKey: "));
 
         if (!pk->isRSA())
         {
-            setTokenError(FIREBASE_ERROR_TOKEN_PARSE_PK);
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("BearSSL, isRSA: "));
-            sendTokenStatusCB();
             delete pk;
             pk = nullptr;
-            return false;
+            return handleError(FIREBASE_ERROR_TOKEN_PARSE_PK, (const char *)FPSTR("BearSSL, isRSA: "));
         }
 
         const br_rsa_private_key *br_rsa_key = pk->getRSA();
@@ -1354,12 +1350,7 @@ bool Firebase_Signer::createJWT()
             config->signer.encSignature.clear();
         }
         else
-        {
-            setTokenError(FIREBASE_ERROR_TOKEN_SIGN);
-            config->signer.tokens.error.message.insert(0, (const char *)FPSTR("BearSSL, br_rsa_i15_pkcs1_sign: "));
-            sendTokenStatusCB();
-            return false;
-        }
+            return handleError(FIREBASE_ERROR_TOKEN_SIGN, (const char *)FPSTR("BearSSL, br_rsa_i15_pkcs1_sign: "));
 #endif
     }
 
@@ -1646,7 +1637,6 @@ void Firebase_Signer::closeSession(FB_TCP_CLIENT *client, fb_esp_session_info_t 
         session->rtdb.new_stream = true;
     }
 #endif
-    session->connected = false;
 }
 
 bool Firebase_Signer::reconnect(FB_TCP_CLIENT *client, fb_esp_session_info_t *session, unsigned long dataTime)
@@ -1704,17 +1694,14 @@ bool Firebase_Signer::reconnect(FB_TCP_CLIENT *client, fb_esp_session_info_t *se
     {
         if (session)
         {
-            if (session->connected)
-                closeSession(client, session);
+            closeSession(client, session);
             session->response.code = FIREBASE_ERROR_TCP_ERROR_CONNECTION_LOST;
         }
 
-        bool s_connected = session ? session->connected : false;
-
         if (config)
-            resumeWiFi(client, config->internal.net_once_connected, config->internal.fb_last_reconnect_millis, config->timeout.wifiReconnect, s_connected);
+            resumeWiFi(client, config->internal.net_once_connected, config->internal.fb_last_reconnect_millis, config->timeout.wifiReconnect);
         else
-            resumeWiFi(client, net_once_connected, last_reconnect_millis, wifi_reconnect_tmo, s_connected);
+            resumeWiFi(client, net_once_connected, last_reconnect_millis, wifi_reconnect_tmo);
 
 #if defined(FB_ENABLE_EXTERNAL_CLIENT)
         client->networkReady();
@@ -1740,7 +1727,7 @@ bool Firebase_Signer::reconnect(FB_TCP_CLIENT *client, fb_esp_session_info_t *se
     return networkStatus;
 }
 
-void Firebase_Signer::resumeWiFi(FB_TCP_CLIENT *client, bool &net_once_connected, unsigned long &last_reconnect_millis, uint16_t &wifi_reconnect_tmo, bool session_connected)
+void Firebase_Signer::resumeWiFi(FB_TCP_CLIENT *client, bool &net_once_connected, unsigned long &last_reconnect_millis, uint16_t &wifi_reconnect_tmo)
 {
 
     if (autoReconnectWiFi || !net_once_connected)
@@ -1749,8 +1736,7 @@ void Firebase_Signer::resumeWiFi(FB_TCP_CLIENT *client, bool &net_once_connected
             wifi_reconnect_tmo > MAX_WIFI_RECONNECT_TIMEOUT)
             wifi_reconnect_tmo = MIN_WIFI_RECONNECT_TIMEOUT;
 
-        if (millis() - last_reconnect_millis > wifi_reconnect_tmo &&
-            !session_connected)
+        if (millis() - last_reconnect_millis > wifi_reconnect_tmo)
         {
 
 #if defined(FB_ENABLE_EXTERNAL_CLIENT)
@@ -1805,10 +1791,20 @@ bool Firebase_Signer::reconnect()
     networkChecking = true;
 
     bool noClient = tcpClient == nullptr;
+
+    // We need tcpClient for network checking.
+
+    // Because this function will be called frequently (repeatedly), to avoid too many verbose debug messages from
+    // internal SSL client destructor when freeClient was executed, the new tcpClient will be created
+    // without initializing the internal SSL client.
+
     if (noClient)
-        newClient(&tcpClient);
+        newClient(&tcpClient, false);
 
     reconnect(tcpClient, nullptr);
+
+    if (noClient)
+        freeClient(&tcpClient);
 
     networkChecking = false;
 
@@ -1841,7 +1837,7 @@ bool Firebase_Signer::initClient(PGM_P subDomain, fb_esp_auth_token_status statu
 
     // No external and local client assigned?
     if (!tcpClient && !localTCPClient)
-        newClient(&tcpClient);
+        newClient(&tcpClient, true);
 
     // Stop TCP session
     tcpClient->stop();
@@ -2140,13 +2136,15 @@ bool Firebase_Signer::handleEmailSending(MB_StringPtr payload, fb_esp_user_email
     return true;
 }
 
-void Firebase_Signer::checkToken()
+bool Firebase_Signer::checkToken()
 {
     if (!config || !auth)
-        return;
+        return false;
 
     if (isAuthToken(true) && isExpired())
         handleToken();
+
+    return config->signer.tokens.status == token_status_ready;
 }
 
 bool Firebase_Signer::tokenReady()
@@ -2179,6 +2177,7 @@ void Firebase_Signer::errorToString(int httpCode, MB_String &buff)
 
 #if defined(ENABLE_ERROR_STRING)
 
+    // The httpcode (session.response.code of FirebaseData) passes to this function matches every case here.
     switch (httpCode)
     {
 
@@ -2428,6 +2427,7 @@ void Firebase_Signer::errorToString(int httpCode, MB_String &buff)
         return;
 
     default:
+        // The default case will never be happened.
         return;
     }
 

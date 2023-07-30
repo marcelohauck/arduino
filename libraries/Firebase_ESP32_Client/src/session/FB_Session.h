@@ -1,14 +1,14 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
 /**
- * Google's Firebase Data class, FB_Session.h version 1.3.7
+ * Google's Firebase Data class, FB_Session.h version 1.3.9
  *
  * This library supports Espressif ESP8266, ESP32 and RP2040 Pico
  *
- * Created April 5, 2023
+ * Created July 11, 2023
  *
  * This work is a part of Firebase ESP Client library
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -531,9 +531,9 @@ public:
   /** Get the error code from the process.
    *
    * @return The error code (int).
-   * 
+   *
    * See src/FB_Error.h
-   * 
+   *
    */
   int errorCode();
 
@@ -914,6 +914,26 @@ public:
    */
   String payload();
 
+  /** Setup TCP KeepAlive for internal TCP client.
+   *
+   * @param tcpKeepIdleSeconds lwIP TCP Keepalive idle in seconds.
+   * @param tcpKeepIntervalSeconds lwIP TCP Keepalive interval in seconds.
+   * @param tcpKeepCount lwIP TCP Keepalive count.
+   * 
+   * For the TCP (KeepAlive) options, see https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/lwip.html#tcp-options.
+   * 
+   * If value of one of these parameters is zero, the TCP KeepAlive will be disabled.
+   * 
+   * You can check the server connecting status, by exexuting <FirebaseData>.httpConnected() which will return true when connection to the server is still alive. 
+   */
+  void keepAlive(int tcpKeepIdleSeconds, int tcpKeepIntervalSeconds, int tcpKeepCount);
+
+   /** Get TCP KeepAlive status.
+   *
+   * @return Boolean status of TCP Keepalive.
+   */
+  bool isKeepAlive();
+
   FB_TCP_CLIENT tcpClient;
 
 #if defined(FIREBASE_ESP32_CLIENT) || defined(FIREBASE_ESP8266_CLIENT)
@@ -1027,7 +1047,7 @@ private:
 #endif
 #ifdef ENABLE_RTDB
   void clearQueueItem(QueueItem *item);
-  void sendStreamToCB(int code);
+  void sendStreamToCB(int code, bool report = true);
   void mSetIntValue(const char *value);
   void mSetFloatValue(const char *value);
   void mSetBoolValue(bool value);

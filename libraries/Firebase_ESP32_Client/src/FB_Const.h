@@ -1,10 +1,10 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
 /**
- * Created June 7, 2023
+ * Created July 11, 2023
  *
  * This work is a part of Firebase ESP Client library
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -43,14 +43,20 @@
 #include <functional>
 #endif
 
-#include "FB_Network.h"
 #include "FirebaseFS.h"
-#include "./mbfs/MB_FS.h"
+#include "FB_Network.h"
+
+#if defined(DEFAULT_FLASH_FS) || defined(DEFAULT_SD_FS)
+#define FIREBASEJSON_USE_FS
+#endif
 
 #if defined(FIREBASE_USE_PSRAM)
 #define FIREBASEJSON_USE_PSRAM
 #endif
-#include "json/FirebaseJson.h"
+
+// FirebaseJson was already included in MB_FS.h
+#include "./mbfs/MB_FS.h"
+
 #include "MB_NTP.h"
 
 #if defined(ENABLE_OTA_FIRMWARE_UPDATE) && (defined(ENABLE_RTDB) || defined(ENABLE_FB_STORAGE) || defined(ENABLE_GC_STORAGE))
@@ -61,7 +67,6 @@
 #endif
 #define OTA_UPDATE_ENABLED
 #endif
-
 
 #if defined(MB_ARDUINO_PICO) && defined(INC_FREERTOS_H) && !defined(ENABLE_PICO_FREE_RTOS)
 #define ENABLE_PICO_FREE_RTOS
@@ -1889,7 +1894,6 @@ struct fb_esp_session_info_t
     bool streaming = false;
     bool buffer_ovf = false;
     bool chunked_encoding = false;
-    bool connected = false;
     bool classic_request = false;
     MB_String host;
     unsigned long last_conn_ms = 0;

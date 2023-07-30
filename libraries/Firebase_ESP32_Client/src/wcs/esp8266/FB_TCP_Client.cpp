@@ -1,12 +1,12 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
 /**
- * Firebase TCP Client v1.2.4
+ * Firebase TCP Client v1.2.7
  *
- * Created March 5, 2023
+ * Created July 10, 2023
  *
  * The MIT License (MIT)
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -39,9 +39,13 @@
 
 #include "FB_TCP_Client.h"
 
-FB_TCP_Client::FB_TCP_Client()
+FB_TCP_Client::FB_TCP_Client(bool initSSLClient)
 {
-  client = wcs.get();
+  if (!wcs && initSSLClient)
+  {
+    wcs = std::unique_ptr<FB_ESP_SSL_CLIENT>(new FB_ESP_SSL_CLIENT());
+    client = wcs.get();
+  }
 }
 
 FB_TCP_Client::~FB_TCP_Client()
@@ -51,6 +55,9 @@ FB_TCP_Client::~FB_TCP_Client()
 
 void FB_TCP_Client::setInsecure()
 {
+  if (!wcs)
+    return;
+
   wcs->setInsecure();
 }
 
@@ -80,6 +87,9 @@ void FB_TCP_Client::setCACert(const char *caCert)
 
 bool FB_TCP_Client::setCertFile(const char *caCertFile, mb_fs_mem_storage_type storageType)
 {
+
+  if (!wcs)
+    return false;
 
   if (clockReady && strlen(caCertFile) > 0)
   {
@@ -117,7 +127,7 @@ void FB_TCP_Client::setBufferSizes(int recv, int xmit)
 
 bool FB_TCP_Client::networkReady()
 {
-  return WiFi.status() == WL_CONNECTED || ethLinkUp();
+  return (WiFi.status() == WL_CONNECTED && validIP(WiFi.localIP())) || ethLinkUp();
 }
 
 void FB_TCP_Client::networkReconnect()
@@ -146,6 +156,43 @@ int FB_TCP_Client::hostByName(const char *name, IPAddress &ip)
   return WiFi.hostByName(name, ip);
 }
 
+// override the base connect
+bool FB_TCP_Client::connect()
+{
+  if (!wcs)
+    return false;
+
+  if (connected())
+  {
+    flush();
+    return true;
+  }
+
+  client = wcs.get();
+
+  lastConnMillis = millis();
+  if (!client->connect(host.c_str(), port))
+    return setError(FIREBASE_ERROR_TCP_ERROR_CONNECTION_REFUSED);
+
+  wcs->setTimeout(timeoutMs);
+
+// For TCP keepalive should work in ESP8266 core > 3.1.2.
+// https://github.com/esp8266/Arduino/pull/8940
+
+// Not currently supported by WiFiClientSecure in Arduino Pico core
+#if defined(ESP8266) && defined(USE_CONNECTION_KEEP_ALIVE_MODE) // Use TCP KeepAlive (interval connection probing) together with HTTP connection Keep-Alive
+  if (isKeepAliveSet())
+  {
+    if (tcpKeepIdleSeconds == 0 || tcpKeepIntervalSeconds == 0 || tcpKeepCount == 0)
+      wcs->disableKeepAlive();
+    else
+      wcs->keepAlive(tcpKeepIdleSeconds, tcpKeepIntervalSeconds, tcpKeepCount);
+  }
+#endif
+
+  return connected();
+}
+
 void FB_TCP_Client::setTimeout(uint32_t timeoutmSec)
 {
   if (wcs)
@@ -156,6 +203,9 @@ void FB_TCP_Client::setTimeout(uint32_t timeoutmSec)
 
 bool FB_TCP_Client::begin(const char *host, uint16_t port, int *response_code)
 {
+
+  if (!wcs)
+    return false;
 
   this->host = host;
   this->port = port;
@@ -170,6 +220,9 @@ bool FB_TCP_Client::begin(const char *host, uint16_t port, int *response_code)
 
 int FB_TCP_Client::beginUpdate(int len, bool verify)
 {
+  if (!wcs)
+    return FIREBASE_ERROR_FW_UPDATE_BEGIN_FAILED;
+
   int code = 0;
 #if defined(ESP8266)
   if (len > (int)ESP.getFreeSketchSpace())
@@ -251,7 +304,6 @@ bool FB_TCP_Client::ethLinkUp()
 
 #elif defined(MB_ARDUINO_PICO)
 
-
 #endif
 
   return ret;
@@ -264,6 +316,11 @@ ex:
   delayMicroseconds(0);
 
   return ret;
+}
+
+bool FB_TCP_Client::validIP(IPAddress ip)
+{
+    return strcmp(ip.toString().c_str(), "0.0.0.0") != 0;
 }
 
 void FB_TCP_Client::ethDNSWorkAround()
@@ -288,12 +345,11 @@ void FB_TCP_Client::ethDNSWorkAround()
 
 #elif defined(MB_ARDUINO_PICO)
 
-
 #endif
 
   return;
 
-#if defined(INC_ENC28J60_LWIP) || defined(INC_W5100_LWIP) || defined(INC_W5500_LWIP) 
+#if defined(INC_ENC28J60_LWIP) || defined(INC_W5100_LWIP) || defined(INC_W5500_LWIP)
 ex:
   WiFiClient _client;
   _client.connect(host.c_str(), port);

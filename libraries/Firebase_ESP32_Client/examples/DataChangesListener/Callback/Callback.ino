@@ -128,6 +128,10 @@ void setup()
   stream.setBSSLBufferSize(2048 /* Rx in bytes, 512 - 16384 */, 512 /* Tx in bytes, 512 - 16384 */);
 #endif
 
+  // You can use TCP KeepAlive For more reliable stream operation and tracking the server connection status, please read this for detail.
+  // https://github.com/mobizt/Firebase-ESP32#enable-tcp-keepalive-for-reliable-http-streaming
+  stream.keepAlive(5, 5, 1);
+
   if (!Firebase.beginStream(stream, "/test/stream/data"))
     Serial.printf("sream begin error, %s\n\n", stream.errorReason().c_str());
 
@@ -174,4 +178,19 @@ void loop()
     json.add("num", count);
     Serial.printf("Set json... %s\n\n", Firebase.setJSON(fbdo, "/test/stream/data/json", json) ? "ok" : fbdo.errorReason().c_str());
   }
+
+  // After calling stream.keepAlive, now we can track the server connecting status
+  if (!stream.httpConnected())
+  {
+    // Server was disconnected!
+  }
 }
+
+// To pause stream
+// stream.pauseFirebase(true);
+// stream.clear(); // close session and release memory
+
+
+// To resume stream with callback
+// stream.pauseFirebase(false);
+// Firebase.setStreamCallback(stream, streamCallback, streamTimeoutCallback);

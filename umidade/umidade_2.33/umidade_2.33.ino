@@ -412,7 +412,7 @@ delay (60000);
       Serial.print(" | exaust: ");
       Serial.println(digitalRead(a4));
 
-      delay (900000); //tempo de rega
+      delay (180000); //tempo de rega
 
       //sensor de ar
       delay(10000);

@@ -1,14 +1,14 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
 /**
- * Google's Firebase Data class, FB_Session.cpp version 1.3.7
+ * Google's Firebase Data class, FB_Session.cpp version 1.3.9
  *
  * This library supports Espressif ESP8266, ESP32 and RP2040 Pico
  *
- * Created April 5, 2023
+ * Created July 11, 2023
  *
  * This work is a part of Firebase ESP Client library
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -508,8 +508,7 @@ uint8_t FirebaseData::dataTypeEnum()
 
 bool FirebaseData::streamAvailable()
 {
-    bool ret = session.connected && !session.rtdb.stream_stop &&
-               session.rtdb.data_available && session.rtdb.stream_data_changed;
+    bool ret = !session.rtdb.stream_stop && session.rtdb.data_available && session.rtdb.stream_data_changed;
     session.rtdb.data_available = false;
     session.rtdb.stream_data_changed = false;
     return ret;
@@ -585,7 +584,7 @@ WiFiClientSecure *FirebaseData::getWiFiClient()
 
 bool FirebaseData::httpConnected()
 {
-    return session.connected;
+    return tcpClient.connected();
 }
 
 bool FirebaseData::bufferOverflow()
@@ -599,6 +598,16 @@ String FirebaseData::fileTransferError()
         return session.error.c_str();
     else
         return errorReason();
+}
+
+void FirebaseData::keepAlive(int tcpKeepIdleSeconds, int tcpKeepIntervalSeconds, int tcpKeepCount)
+{
+    tcpClient.keepAlive(tcpKeepIdleSeconds, tcpKeepIntervalSeconds, tcpKeepCount);
+}
+
+bool FirebaseData::isKeepAlive()
+{
+    return tcpClient.isKeepAlive;
 }
 
 String FirebaseData::payload()
@@ -700,7 +709,7 @@ String FirebaseData::downloadURL()
     if (bucket.length() > 0)
     {
         MB_String host;
-        HttpHelper::addGAPIsHost(host, fb_esp_storage_ss_pgm_str_1/* "firebasestorage." */);
+        HttpHelper::addGAPIsHost(host, fb_esp_storage_ss_pgm_str_1 /* "firebasestorage." */);
         URLHelper::host2Url(link, host);
         link += fb_esp_storage_ss_pgm_str_2; // "/v0/b/"
         link += bucket;
@@ -741,7 +750,7 @@ int FirebaseData::maxPayloadLength()
 }
 
 #ifdef ENABLE_RTDB
-void FirebaseData::sendStreamToCB(int code)
+void FirebaseData::sendStreamToCB(int code, bool report)
 {
     session.error.clear();
     session.errCode = 0;
@@ -753,7 +762,8 @@ void FirebaseData::sendStreamToCB(int code)
         if (_timeoutCallback && millis() - Signer.config->internal.fb_last_stream_timeout_cb_millis > 3000)
         {
             Signer.config->internal.fb_last_stream_timeout_cb_millis = millis();
-            _timeoutCallback(code < 0);
+            if (report)
+                _timeoutCallback(code < 0);
         }
     }
 }
@@ -1073,14 +1083,6 @@ bool FirebaseData::prepareDownload(const MB_String &filename, fb_esp_mem_storage
     // We can't open file (flash or sd) to write here because of truncated result, only append is ok.
     // We have to remove existing file
     Signer.mbfs->remove(filename, mbfs_type type);
-#else
-    int ret = Signer.mbfs->open(filename, mbfs_type type, mb_fs_open_mode_write);
-    if (ret < 0)
-    {
-        tcpClient.flush();
-        session.response.code = ret;
-        return false;
-    }
 #endif
     return true;
 }
@@ -1173,7 +1175,7 @@ bool FirebaseData::processDownload(const MB_String &filename, fb_esp_mem_storage
                         else
                         {
                             // based64 encoded string of file data
-                            tcpHandler.isBase64File = StringHelper::compare((char *)buf, 0, fb_esp_rtdb_pgm_str_8/* "\"file,base64," */, true);
+                            tcpHandler.isBase64File = StringHelper::compare((char *)buf, 0, fb_esp_rtdb_pgm_str_8 /* "\"file,base64," */, true);
                         }
 
                         if (tcpHandler.isBase64File)
@@ -2034,8 +2036,6 @@ bool FCMObject::fcm_send(FirebaseData &fbdo, fb_esp_fcm_msg_type messageType)
             Signer.config->internal.fb_processing = false;
         return false;
     }
-    else
-        fbdo.session.connected = true;
 
     bool ret = waitResponse(fbdo);
 
@@ -2052,8 +2052,7 @@ void FCMObject::rescon(FirebaseData &fbdo, const char *host)
 {
     fbdo._responseCallback = NULL;
 
-    if (fbdo.session.cert_updated || !fbdo.session.connected ||
-        millis() - fbdo.session.last_conn_ms > fbdo.session.conn_timeout ||
+    if (fbdo.session.cert_updated || millis() - fbdo.session.last_conn_ms > fbdo.session.conn_timeout ||
         fbdo.session.con_mode != fb_esp_con_mode_fcm ||
         strcmp(host, fbdo.session.host.c_str()) != 0)
     {

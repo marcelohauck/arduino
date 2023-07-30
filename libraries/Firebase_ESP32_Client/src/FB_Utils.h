@@ -1,5 +1,5 @@
 #include "Firebase_Client_Version.h"
-#if !FIREBASE_CLIENT_VERSION_CHECK(40311)
+#if !FIREBASE_CLIENT_VERSION_CHECK(40318)
 #error "Mixed versions compilation."
 #endif
 
@@ -7,7 +7,7 @@
  *
  * This library supports Espressif ESP8266, ESP32 and Raspberry Pi Pico (RP2040)
  *
- * Created April 5, 2023
+ * Created July 20, 2023
  *
  * This work is a part of Firebase ESP Client library
  * Copyright (c) 2023 K. Suwatchai (Mobizt)
@@ -1414,6 +1414,9 @@ namespace Base64Helper
         size_t write = out.bufWrite;
         out.bufWrite = 0;
 
+        if (write == 0)
+            return true;
+
         if (out.outC && out.outC->write((uint8_t *)out.outT, write) == write)
             return true;
         else if (out.filetype != mb_fs_mem_storage_type_undefined && mbfs->write(mbfs_type out.filetype,
@@ -1727,7 +1730,7 @@ namespace TimeHelper
 #if defined(FB_ENABLE_EXTERNAL_CLIENT) || defined(MB_ARDUINO_PICO)
         tm = *mb_ts_offset + millis() / 1000;
 
-#if defined(MB_ARDUINO_PICO)
+#if defined(MB_ARDUINO_PICO) || defined(ESP32) || defined(ESP8266)
         if (tm < time(nullptr))
             tm = time(nullptr);
 #endif
