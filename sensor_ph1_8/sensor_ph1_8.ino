@@ -3,11 +3,10 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include "DHT.h"
+#include <avr/wdt.h>
 
 #define b2 A2  // solenoide bomba
-#define b3 A3  // solenoide tanque
 #define RXD2 16
 #define TXD2 17
 #define RE 8
@@ -15,12 +14,6 @@
 #define RX_BUFF_SIZE 30
 #define DHTPIN 9
 #define DHTTYPE DHT22
-
-// Create the SSD1306 display object
-const byte SCREEN_WIDTH = 128;  // OLED display width, in pixels
-const byte SCREEN_HEIGHT = 64;  // OLED display height, in pixels
-const int OLED_RESET = -1;      // Reset pin # (or -1 if sharing Arduino reset pin)
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -76,32 +69,15 @@ SoftwareSerial mod(2, 3);  // RX, TX ( Creates a new SoftwareSerial object ) (fo
 //SoftwareSerial mod(10,3); // RX, TX ( Creates a new SoftwareSerial object ) (for Mega2560)
 
 void setup() {
+  wdt_disable();
   Serial.begin(115200);
   Serial.println("Mendigrow 1.8");
   mod.begin(4800);
   pinMode(RE, OUTPUT);
   pinMode(DE, OUTPUT);
   pinMode(b2, OUTPUT);
-  pinMode(b3, OUTPUT);
   digitalWrite(b2, HIGH);
-  digitalWrite(b3, HIGH);
   dht.begin();
-
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C
-  display.clearDisplay();                     // Clear the buffer.
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 5);
-  display.display();
-  // Initialize the display
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;)
-      ;
-  }
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
 
 }  //setup
 
@@ -265,45 +241,22 @@ void PrintData(void) {
   Serial.print(humidityVal, 1);
   Serial.println("%");
 
-  // Print to the display
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.print("Soil Humidity....: ");
-  display.print(humidityVal, 1);
-  display.println("%");
-  display.display();
 
   // Print messages based on the humidity value
   if (humidityVal > 70.0) {
     Serial.println("Umidade alta");
-    display.println("Umidade alta");
-    display.display();
     delay(60000);
-  } else if (humidityVal < 25.0) {
-    Serial.println("Umidade baixa, irrigação ativa");
-    display.println("Umidade baixa, irrigação ativa");
-    display.display();
-    while (humidityVal < 62.0) {
+  } else if (humidityVal < 62.0) {
+    do {
+      Serial.println("Umidade baixa, irrigação ativa");
       digitalWrite(b2, LOW);
-      digitalWrite(b3, LOW);
       delay(300000);
-
-      ModSM();                             // Update the values array
-      val = (values[3] << 8) + values[4];  // Recalculate val
-      humidityVal = (float)val / 10.0;     // Recalculate humidityVal
+      digitalWrite(b2, HIGH);
 
       Serial.print("Soil Humidity....: ");
       Serial.print(humidityVal, 1);
       Serial.println("%");
-      display.print("Soil Humidity....: ");
-      display.print(humidityVal, 1);
-      display.println("%");
-      display.display();
-      digitalWrite(b2, HIGH);
-      digitalWrite(b3, HIGH);
       Serial.println("irrigação pausada");
-      display.println("irrigação pausada");
-      display.display();
       delay(3300000);
 
       ModSM();                             // Update the values array
@@ -313,11 +266,7 @@ void PrintData(void) {
       Serial.print("Soil Humidity....: ");
       Serial.print(humidityVal, 1);
       Serial.println("%");
-      display.print("Soil Humidity....: ");
-      display.print(humidityVal, 1);
-      display.println("%");
-      display.display();
-    }
+    } while (humidityVal < 62.0);
   }
 
   //1 index 5     temperature
@@ -325,10 +274,6 @@ void PrintData(void) {
   Serial.print("Soil Temperature.: ");
   Serial.print((float)val / 10.0, 1);
   Serial.println("oC");
-  display.print("Soil Temperature.: ");
-  display.print((float)val / 10.0, 1);
-  display.println("oC");
-  display.display();
 
   //3 index 9     PH
   val = (values[9] << 8) + values[10];
@@ -336,20 +281,12 @@ void PrintData(void) {
   Serial.print("pH..........: ");
   Serial.print(phVal);
   Serial.println("");
-  display.print("pH..........: ");
-  display.print(phVal);
-  display.println("");
-  display.display();
 
   // Print messages based on the humidity value
   if (phVal > 7.0) {
     Serial.println("PH alcalino");
-    display.println("PH alcalino");
-    display.display();
   } else if (phVal < 5.8) {
     Serial.println("PH ácido");
-    display.println("PH ácido");
-    display.display();
   }
 
   //4 index 11    nitrogen content
@@ -357,30 +294,18 @@ void PrintData(void) {
   Serial.print("Nitrogen....: ");
   Serial.print(val);
   Serial.println("mg/kg");
-  display.print("Nitrogen....: ");
-  display.print(val);
-  display.println("mg/kg");
-  display.display();
 
   //5 index 13    phosphorus content
   val = (values[13] << 8) + values[14];
   Serial.print("Phosphorus..: ");
   Serial.print(val);
   Serial.println("mg/kg");
-  display.print("Phosphorus..: ");
-  display.print(val);
-  display.println("mg/kg");
-  display.display();
 
   //6 index 15    potassium content
   val = (values[15] << 8) + values[16];
   Serial.print("Potassium...: ");
   Serial.print(val);
   Serial.println("mg/kg");
-  display.print("Potassium...: ");
-  display.print(val);
-  display.println("mg/kg");
-  display.display();
 
   float h = dht.readHumidity();
   float t = dht.readTemperature();
@@ -388,27 +313,17 @@ void PrintData(void) {
 
   if (isnan(h) || isnan(t) || isnan(f)) {
     Serial.println(F("Failed to read from DHT sensor!"));
-    display.println(F("Failed to read from DHT sensor!"));
-    display.display();
     return;
   }
 
   float hif = dht.computeHeatIndex(f, h);
   float hic = dht.computeHeatIndex(t, h, false);
-  Serial.print("Air humidity...: ");
+  Serial.print("Air h...: ");
   Serial.print(h);
   Serial.println("%");
-  display.print("Air humidity...: ");
-  display.print(h);
-  display.println("%");
-  display.display();
-  Serial.print("Air temperature...: ");
+  Serial.print("Air t...: ");
   Serial.print(t);
   Serial.println(F(" c"));
-  display.print("Air temperature...: ");
-  display.print(t);
-  display.println(F(" c"));
-  display.display();
 
   delay(600000);
 }  //PrintData
